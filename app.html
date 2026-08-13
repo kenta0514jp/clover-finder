@@ -253,7 +253,7 @@
     <h2>解析</h2>
     <div class="ctl">
       <div class="row"><label for="sRes">解析の解像度</label><span class="val" id="vRes"></span></div>
-      <input type="range" id="sRes" min="0" max="2" step="1" value="2">
+      <input type="range" id="sRes" min="0" max="2" step="1" value="1">
       <p class="note">下げると速くなりますが、小さく写った株を取りこぼします。画面上の「s/枚」を見て決めてください。</p>
     </div>
 
@@ -342,7 +342,7 @@ const wctx = work.getContext('2d', { willReadFrequently:true });
 const grab = document.createElement('canvas');
 const gctx = grab.getContext('2d');
 
-const DEFAULTS = { thr:25, marks:8, res:1, sound:true, vib:true, shot:true, three:false };
+const DEFAULTS = { thr:25, marks:5, res:1, sound:true, vib:true, shot:true, three:false };
 const P = Object.assign({}, DEFAULTS);
 
 /* Measured on the nine held-out photos: 512 found four-leaf in 4 of 6 with no
@@ -752,6 +752,10 @@ const sliders = [
 sliders.forEach(([sid,vid,key,fmt]) => {
   const s = $(sid), out = $(vid);
   const sync = () => { P[key] = +s.value; out.textContent = fmt(+s.value); };
+  /* DEFAULTS is the single source of truth. Reading the markup's value instead
+     let the two drift: the resolution slider said 640 while DEFAULTS said 512,
+     and the slider quietly won. */
+  s.value = P[key];
   s.addEventListener('input', sync); s._sync = sync; sync();
 });
 const toggles = [['tSound','sound'],['tVib','vib'],['tShot','shot'],['tThree','three']];

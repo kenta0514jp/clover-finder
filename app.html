@@ -1,0 +1,725 @@
+<title>Clover Scope — 四つ葉ファインダー</title>
+
+<style>
+  :root{
+    /* A viewfinder commits to one dark world: the camera image is the ground
+       and a light UI would wash out over sunlit grass. */
+    --ink:      #0A0E0B;
+    --ink-2:    #121812;
+    --ink-3:    #1A231B;
+    --hair:     #263327;
+    --mist:     #C9D3C7;
+    --dim:      #7A877C;
+    --faint:    #4C574E;
+    --signal:   #F2B441;   /* the find colour. never green — grass is green */
+    --signal-d: #8A6316;
+    --trace:    #7FB3D5;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", "Segoe UI", Roboto, sans-serif;
+  }
+  *{ box-sizing:border-box; }
+  body{
+    margin:0; background:var(--ink); color:var(--mist);
+    font-family:var(--sans); -webkit-font-smoothing:antialiased;
+    overscroll-behavior:none;
+  }
+  .app{
+    display:flex; flex-direction:column; height:100dvh;
+    max-width:680px; margin:0 auto; position:relative; overflow:hidden;
+    background:var(--ink);
+  }
+
+  .hud{
+    display:flex; align-items:center; gap:12px;
+    padding:10px 14px; border-bottom:1px solid var(--hair);
+    font-family:var(--mono); font-size:11px; letter-spacing:.14em;
+    text-transform:uppercase; color:var(--dim); flex:0 0 auto;
+  }
+  .brand{ color:var(--mist); letter-spacing:.22em; font-weight:600; }
+  .hud .sep{ flex:1; }
+  .stat{ font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .stat b{ color:var(--mist); font-weight:600; }
+  .stat.hit b{ color:var(--signal); }
+  .lamp{ width:7px; height:7px; border-radius:50%; background:var(--faint); flex:0 0 auto; }
+  .lamp.live{ background:var(--trace); box-shadow:0 0 8px var(--trace); }
+  .lamp.found{ background:var(--signal); box-shadow:0 0 10px var(--signal); }
+
+  .stage{ position:relative; flex:1 1 auto; min-height:0; background:#050705; overflow:hidden; }
+  #cam{ position:absolute; inset:0; width:100%; height:100%; object-fit:cover; display:block; background:#050705; }
+  #still{ position:absolute; inset:0; width:100%; height:100%; object-fit:contain; display:none; background:#050705; }
+  #overlay{ position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
+
+  .readout{
+    position:absolute; left:0; right:0; bottom:0;
+    padding:14px 16px calc(14px + env(safe-area-inset-bottom) * 0);
+    background:linear-gradient(to top, rgba(10,14,11,.92), rgba(10,14,11,0));
+    display:none; flex-direction:column; gap:8px; pointer-events:none;
+  }
+  .readout.on{ display:flex; }
+  .verdict{
+    font-family:var(--mono); font-size:13px; letter-spacing:.16em;
+    text-transform:uppercase; color:var(--dim); display:flex;
+    align-items:baseline; gap:10px;
+  }
+  .verdict b{ font-size:30px; color:var(--mist); font-variant-numeric:tabular-nums; letter-spacing:.02em; }
+  .verdict.hot b, .verdict.hot{ color:var(--signal); }
+  .meter{ height:3px; background:var(--hair); position:relative; overflow:hidden; }
+  .meter i{ position:absolute; inset:0 auto 0 0; width:0%; background:var(--trace); transition:width .12s linear; }
+  .meter.hot i{ background:var(--signal); }
+  .hint{ font-size:11.5px; color:var(--faint); line-height:1.5; }
+
+  .curtain{
+    position:absolute; inset:0; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; gap:16px; padding:32px 28px;
+    text-align:center; background:radial-gradient(120% 90% at 50% 40%, #101A12 0%, #070A07 70%);
+  }
+  .curtain.gone{ display:none; }
+  .curtain h1{
+    margin:0; font-family:var(--mono); font-size:15px; font-weight:600;
+    letter-spacing:.3em; text-transform:uppercase; color:var(--mist); text-wrap:balance;
+  }
+  .curtain p{ margin:0; max-width:36ch; font-size:13.5px; line-height:1.75; color:var(--dim); }
+  .curtain .err{
+    color:var(--signal); font-family:var(--mono); font-size:12px;
+    line-height:1.7; max-width:38ch; text-align:left;
+  }
+  .rescue{ display:flex; gap:10px; flex-wrap:wrap; justify-content:center; }
+  .diag{
+    margin:0; font-family:var(--mono); font-size:10.5px; line-height:1.6;
+    color:var(--faint); text-align:left; white-space:pre-wrap; word-break:break-all;
+    max-width:44ch; border-top:1px solid var(--hair); padding-top:10px;
+  }
+  .reticle-art{
+    width:96px; height:96px; border:1px solid var(--hair);
+    display:grid; place-items:center; position:relative;
+  }
+  .reticle-art::before,.reticle-art::after{ content:""; position:absolute; background:var(--hair); }
+  .reticle-art::before{ width:1px; height:20px; top:-10px; }
+  .reticle-art::after{ width:20px; height:1px; left:-10px; }
+  .reticle-art span{ font-family:var(--mono); font-size:24px; color:var(--faint); }
+
+  .strip{
+    flex:0 0 auto; display:none; gap:8px; padding:10px 14px; overflow-x:auto;
+    border-top:1px solid var(--hair); background:var(--ink-2); scrollbar-width:thin;
+  }
+  .strip.on{ display:flex; }
+  .shot{
+    flex:0 0 auto; width:74px; border:1px solid var(--hair); background:var(--ink-3);
+    padding:0; border-radius:2px; overflow:hidden; display:block; text-decoration:none;
+  }
+  .shot img{ width:100%; display:block; aspect-ratio:1; object-fit:cover; }
+  .shot span{
+    display:block; font-family:var(--mono); font-size:9.5px; letter-spacing:.08em;
+    color:var(--signal); padding:3px 0 4px; text-align:center; font-variant-numeric:tabular-nums;
+  }
+  .shot:focus-visible{ outline:2px solid var(--signal); outline-offset:2px; }
+
+  .dock{
+    flex:0 0 auto; display:flex; align-items:center; gap:9px;
+    padding:12px 14px calc(12px + env(safe-area-inset-bottom));
+    border-top:1px solid var(--hair); background:var(--ink-2);
+  }
+  button, .filebtn{
+    font-family:var(--mono); font-size:11.5px; letter-spacing:.14em;
+    text-transform:uppercase; color:var(--mist); background:var(--ink-3);
+    border:1px solid var(--hair); border-radius:2px; padding:12px 13px;
+    cursor:pointer; -webkit-tap-highlight-color:transparent;
+  }
+  button:focus-visible,.filebtn:focus-visible{ outline:2px solid var(--trace); outline-offset:2px; }
+  button:disabled{ opacity:.4; cursor:default; }
+  .primary{ flex:1 1 auto; background:var(--mist); color:var(--ink); border-color:var(--mist); font-weight:700; }
+  .primary.stop{ background:transparent; color:var(--mist); border-color:var(--hair); font-weight:600; }
+  .icon{ flex:0 0 auto; min-width:44px; text-align:center; padding:12px 9px; }
+  .icon.on{ color:var(--signal); border-color:var(--signal-d); }
+  .filebtn input{ display:none; }
+
+  .sheet{
+    position:absolute; left:0; right:0; bottom:0; background:var(--ink-2);
+    border-top:1px solid var(--hair);
+    padding:16px 16px calc(18px + env(safe-area-inset-bottom));
+    transform:translateY(101%); transition:transform .26s cubic-bezier(.32,.72,0,1);
+    z-index:5; max-height:84%; overflow-y:auto;
+  }
+  .sheet.open{ transform:translateY(0); }
+  .sheet h2{
+    margin:0 0 14px; font-family:var(--mono); font-size:11px; letter-spacing:.24em;
+    text-transform:uppercase; color:var(--dim); font-weight:600;
+    display:flex; align-items:center; gap:12px;
+  }
+  .sheet h2::after{ content:""; flex:1; height:1px; background:var(--hair); }
+  .sheet h2 + h2{ margin-top:24px; }
+  .ctl{ display:grid; gap:7px; margin-bottom:16px; }
+  .ctl .row{ display:flex; justify-content:space-between; align-items:baseline; gap:12px; }
+  .ctl label{ font-size:13px; color:var(--mist); }
+  .ctl .val{ font-family:var(--mono); font-size:12px; color:var(--signal); font-variant-numeric:tabular-nums; }
+  .ctl .note{ font-size:11.5px; color:var(--faint); line-height:1.55; }
+  input[type=range]{ -webkit-appearance:none; appearance:none; width:100%; height:22px; background:transparent; margin:0; }
+  input[type=range]::-webkit-slider-runnable-track{ height:2px; background:var(--hair); }
+  input[type=range]::-moz-range-track{ height:2px; background:var(--hair); }
+  input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none; appearance:none; width:18px; height:18px; margin-top:-8px;
+    background:var(--mist); border:none; border-radius:50%;
+  }
+  input[type=range]::-moz-range-thumb{ width:18px; height:18px; background:var(--mist); border:none; border-radius:50%; }
+  input[type=range]:focus-visible{ outline:2px solid var(--trace); outline-offset:4px; }
+  .toggles{ display:flex; flex-wrap:wrap; gap:8px; }
+  .tog{
+    font-family:var(--mono); font-size:11px; letter-spacing:.12em; text-transform:uppercase;
+    padding:9px 12px; border:1px solid var(--hair); border-radius:2px;
+    background:transparent; color:var(--dim); cursor:pointer;
+  }
+  .tog.on{ color:var(--ink); background:var(--signal); border-color:var(--signal); font-weight:700; }
+  .sheet-foot{ display:flex; gap:10px; margin-top:22px; padding-top:16px; border-top:1px solid var(--hair); }
+  .sheet-foot button{ flex:1; }
+  .fineprint{ margin:16px 0 0; font-size:11.5px; line-height:1.8; color:var(--faint); max-width:60ch; }
+  .fineprint strong{ color:var(--dim); }
+  .fineprint a{ color:var(--trace); }
+
+  .toast{
+    position:absolute; left:50%; bottom:96px; transform:translate(-50%,12px);
+    background:var(--signal); color:var(--ink); font-family:var(--mono); font-size:12px;
+    letter-spacing:.14em; text-transform:uppercase; font-weight:700;
+    padding:9px 16px; border-radius:2px; opacity:0; pointer-events:none;
+    transition:opacity .2s, transform .2s; z-index:6;
+  }
+  .toast.on{ opacity:1; transform:translate(-50%,0); }
+
+  @media (prefers-reduced-motion: reduce){ .sheet,.toast,.meter i{ transition:none; } }
+</style>
+
+<div class="app">
+
+  <div class="hud">
+    <span class="lamp" id="lamp"></span>
+    <span class="brand">Clover&nbsp;Scope</span>
+    <span class="sep"></span>
+    <span class="stat" id="statFps"><b>—</b> /s</span>
+    <span class="stat hit" id="statFound">記録 <b>0</b></span>
+  </div>
+
+  <div class="stage" id="stage">
+    <video id="cam" playsinline muted autoplay></video>
+    <canvas id="still"></canvas>
+    <canvas id="overlay"></canvas>
+
+    <div class="readout" id="readout">
+      <div class="verdict" id="verdict"><span>四つ葉らしさ</span><b>—</b></div>
+      <div class="meter" id="meter"><i></i></div>
+      <div class="hint" id="hint">枠にクローバーを1株だけ入れてください</div>
+    </div>
+
+    <div class="curtain" id="curtain">
+      <div class="reticle-art"><span>✦</span></div>
+      <h1>四つ葉ファインダー</h1>
+      <p><b>枠の中に1株だけ</b>入るまでカメラを近づけてください。株ごとに四つ葉らしさを判定します。芝生全体を映しても当たりません。</p>
+      <p class="err" id="errline" hidden></p>
+      <div class="rescue" id="rescue" hidden>
+        <button id="btnNewTab">別タブで開き直す</button>
+        <label class="filebtn">カメラで1枚撮る
+          <input type="file" id="shotIn" accept="image/*" capture="environment">
+        </label>
+      </div>
+      <pre class="diag" id="diag" hidden></pre>
+    </div>
+  </div>
+
+  <div class="strip" id="strip"></div>
+
+  <div class="dock">
+    <button class="primary" id="btnRun">スキャン開始</button>
+    <button class="icon" id="btnMinus" title="枠を小さく">−</button>
+    <button class="icon" id="btnPlus" title="枠を大きく">＋</button>
+    <button class="icon" id="btnTorch" title="ライト" hidden>灯</button>
+    <label class="filebtn icon" id="btnFile" title="写真を調べる">写真
+      <input type="file" id="fileIn" accept="image/*">
+    </label>
+    <button class="icon" id="btnCfg" title="設定">設定</button>
+  </div>
+
+  <div class="sheet" id="sheet">
+    <h2>判定</h2>
+    <div class="ctl">
+      <div class="row"><label for="sThr">記録する確信度</label><span class="val" id="vThr"></span></div>
+      <input type="range" id="sThr" min="50" max="99" step="1" value="90">
+      <p class="note">この値を超えた状態が続くと、音と記録で知らせます。下げると取りこぼしは減りますが誤りも増えます。</p>
+    </div>
+    <div class="ctl">
+      <div class="row"><label for="sHold">確定までの回数</label><span class="val" id="vHold"></span></div>
+      <input type="range" id="sHold" min="1" max="10" step="1" value="4">
+      <p class="note">連続して超えた回数。手ぶれによる一瞬の反応を捨てます。</p>
+    </div>
+    <div class="ctl">
+      <div class="row"><label for="sBox">枠の大きさ</label><span class="val" id="vBox"></span></div>
+      <input type="range" id="sBox" min="25" max="90" step="1" value="55">
+      <p class="note">画面短辺に対する割合。株がちょうど収まる大きさに。</p>
+    </div>
+
+    <h2>通知</h2>
+    <div class="toggles">
+      <button class="tog on" id="tSound">音</button>
+      <button class="tog on" id="tVib">バイブ</button>
+      <button class="tog on" id="tShot">自動で記録</button>
+    </div>
+
+    <h2>この判定について</h2>
+    <p class="fineprint">
+      377枚の四つ葉写真（<strong>deton/detect4clover</strong>、CC BY 4.0）で学習した約4.7万パラメータの小さなニューラルネットが、端末の中だけで動いています。通信は一切ありません。<br><br>
+      <strong>得意</strong>: 1株が枠いっぱいに写り、背景と分かれているとき。手に取って持つ、または地面すれすれまで寄る。<br>
+      <strong>苦手</strong>: クローバーが密生した絨毯。株の境目が分からず、見逃しも誤検出も増えます。<br><br>
+      検証では、未使用の写真75枚に対し確信度90%以上での適合率100%・再現率30%でした。<strong>3株に2株は見逃します。</strong>怪しい株を絞る道具として使い、最後は必ず自分の目で数えてください。
+    </p>
+
+    <div class="sheet-foot">
+      <button id="btnReset">初期値に戻す</button>
+      <button id="btnClose">閉じる</button>
+    </div>
+  </div>
+
+  <div class="toast" id="toast">四つ葉の候補</div>
+</div>
+
+<script>
+/*__INFER_JS__*/
+</script>
+
+<script>
+var MODEL_SPEC = /*__MODEL_JSON__*/;
+</script>
+
+<script>
+(() => {
+"use strict";
+
+const $ = id => document.getElementById(id);
+const stage=$('stage'), video=$('cam'), overlay=$('overlay'), still=$('still');
+const curtain=$('curtain'), errline=$('errline'), lamp=$('lamp');
+const strip=$('strip'), toast=$('toast'), sheet=$('sheet');
+const readout=$('readout'), verdict=$('verdict'), meter=$('meter'), hint=$('hint');
+const btnRun=$('btnRun'), btnCfg=$('btnCfg'), btnClose=$('btnClose'), btnReset=$('btnReset');
+const btnTorch=$('btnTorch'), fileIn=$('fileIn'), shotIn=$('shotIn');
+const btnPlus=$('btnPlus'), btnMinus=$('btnMinus');
+const rescue=$('rescue'), diag=$('diag'), btnNewTab=$('btnNewTab');
+const statFps=$('statFps').querySelector('b'), statFound=$('statFound').querySelector('b');
+const meterFill = meter.querySelector('i');
+const verdictNum = verdict.querySelector('b');
+
+const octx = overlay.getContext('2d');
+const sctx = still.getContext('2d');
+
+const net = buildModel(MODEL_SPEC);
+const S = net.size;
+
+/* the 96x96 patch handed to the network */
+const patch = document.createElement('canvas');
+patch.width = S; patch.height = S;
+const pctx = patch.getContext('2d', { willReadFrequently:true });
+
+const grab = document.createElement('canvas');
+const gctx = grab.getContext('2d');
+
+const DEFAULTS = { thr:90, hold:4, box:55, sound:true, vib:true, shot:true };
+const P = Object.assign({}, DEFAULTS);
+
+/* ============================================================ overlay ==== */
+let dpr = Math.min(2, window.devicePixelRatio || 1);
+function fitOverlay(){
+  dpr = Math.min(2, window.devicePixelRatio || 1);
+  const r = stage.getBoundingClientRect();
+  overlay.width = Math.round(r.width*dpr);
+  overlay.height = Math.round(r.height*dpr);
+  octx.setTransform(dpr,0,0,dpr,0,0);
+}
+new ResizeObserver(fitOverlay).observe(stage);
+
+function reticleRect(){
+  const cw = stage.clientWidth, ch = stage.clientHeight;
+  const side = Math.min(cw, ch) * (P.box/100);
+  return { x:(cw-side)/2, y:(ch-side)/2, side, cw, ch };
+}
+
+function drawReticle(score){
+  const { x, y, side, cw, ch } = reticleRect();
+  octx.clearRect(0,0,overlay.width,overlay.height);
+
+  octx.fillStyle = 'rgba(10,14,11,.45)';
+  octx.fillRect(0,0,cw,y);
+  octx.fillRect(0,y+side,cw,ch-y-side);
+  octx.fillRect(0,y,x,side);
+  octx.fillRect(x+side,y,cw-x-side,side);
+
+  const hot = score >= P.thr/100;
+  const col = hot ? '#F2B441' : 'rgba(201,211,199,.85)';
+  const a = side*0.22;
+  octx.strokeStyle = col; octx.lineWidth = hot ? 3 : 2; octx.lineCap = 'butt';
+  octx.beginPath();
+  for (const [sx,sy] of [[-1,-1],[1,-1],[-1,1],[1,1]]){
+    const px = sx<0 ? x : x+side, py = sy<0 ? y : y+side;
+    octx.moveTo(px, py - sy*a); octx.lineTo(px, py); octx.lineTo(px - sx*a, py);
+  }
+  octx.stroke();
+
+  if (score > 0){
+    octx.strokeStyle = hot ? '#F2B441' : 'rgba(127,179,213,.9)';
+    octx.lineWidth = 3;
+    octx.beginPath();
+    octx.moveTo(x, y+side+7);
+    octx.lineTo(x + side*Math.min(1,score), y+side+7);
+    octx.stroke();
+  }
+}
+
+/* map the on-screen reticle back to pixels of the video (object-fit: cover) */
+function sampleReticle(){
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if (!vw) return false;
+  const { x, y, side, cw, ch } = reticleRect();
+  const s = Math.max(cw/vw, ch/vh);
+  const ox = (cw - vw*s)/2, oy = (ch - vh*s)/2;
+  const sx = (x - ox)/s, sy = (y - oy)/s, ss = side/s;
+  pctx.drawImage(video, sx, sy, ss, ss, 0, 0, S, S);
+  return true;
+}
+
+/* ============================================================== loop ==== */
+let stream=null, running=false, rafId=0;
+let ema=0, streak=0, found=0, lastRun=0, rate=0, lastStat=0;
+const INTERVAL = 110;
+
+function loop(now){
+  if (!running) return;
+  rafId = requestAnimationFrame(loop);
+  if (now - lastRun < INTERVAL) return;
+  const dt = now - lastRun; lastRun = now;
+  if (video.readyState < 2 || !video.videoWidth) return;
+
+  if (!sampleReticle()) return;
+  const px = pctx.getImageData(0,0,S,S).data;
+  const p = net.predict(px)[net.fourIdx];
+  ema = ema ? ema*0.55 + p*0.45 : p;
+
+  const thr = P.thr/100;
+  if (ema >= thr) streak++; else streak = 0;
+
+  drawReticle(ema);
+  verdictNum.textContent = (ema*100).toFixed(0) + '%';
+  meterFill.style.width = (ema*100).toFixed(1) + '%';
+  const hot = ema >= thr;
+  verdict.classList.toggle('hot', hot);
+  meter.classList.toggle('hot', hot);
+  hint.textContent = hot ? '四つ葉の可能性 — 目で数えて確かめてください'
+                         : '枠にクローバーを1株だけ入れてください';
+
+  if (streak === P.hold){
+    found++; statFound.textContent = found;
+    lamp.className = 'lamp found';
+    flashToast('四つ葉の候補 ' + (ema*100).toFixed(0) + '%');
+    beep(); if (P.vib && navigator.vibrate) navigator.vibrate([28,45,28]);
+    snapshot(ema);
+    setTimeout(() => { if (running) lamp.className = 'lamp live'; }, 1400);
+  }
+
+  rate = rate ? rate*0.8 + (1000/dt)*0.2 : 1000/dt;
+  if (now - lastStat > 400){ lastStat = now; statFps.textContent = rate.toFixed(0); }
+}
+
+/* ============================================================ capture === */
+let audio = null;
+function beep(){
+  if (!P.sound) return;
+  try{
+    audio = audio || new (window.AudioContext||window.webkitAudioContext)();
+    const t = audio.currentTime;
+    const o = audio.createOscillator(), g = audio.createGain();
+    o.type='sine'; o.frequency.setValueAtTime(880,t); o.frequency.setValueAtTime(1320,t+0.09);
+    g.gain.setValueAtTime(0.0001,t);
+    g.gain.exponentialRampToValueAtTime(0.22,t+0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001,t+0.26);
+    o.connect(g).connect(audio.destination); o.start(t); o.stop(t+0.28);
+  }catch(e){}
+}
+let toastTimer=0;
+function flashToast(msg){
+  toast.textContent = msg; toast.classList.add('on');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=>toast.classList.remove('on'), 1600);
+}
+
+function snapshot(score){
+  if (!P.shot) return;
+  const vw = video.videoWidth;
+  if (!vw) return;
+  const { x, y, side, cw, ch } = reticleRect();
+  const vh = video.videoHeight;
+  const s = Math.max(cw/vw, ch/vh);
+  const ox=(cw-vw*s)/2, oy=(ch-vh*s)/2;
+  grab.width = 280; grab.height = 280;
+  gctx.drawImage(video, (x-ox)/s, (y-oy)/s, side/s, side/s, 0, 0, 280, 280);
+  addShot(grab.toDataURL('image/jpeg', 0.9), score);
+}
+
+function addShot(url, score){
+  const d = new Date();
+  const two = v => String(v).padStart(2,'0');
+  const a = document.createElement('a');
+  a.className='shot'; a.href=url;
+  a.download = `clover-${d.getFullYear()}${two(d.getMonth()+1)}${two(d.getDate())}-${two(d.getHours())}${two(d.getMinutes())}${two(d.getSeconds())}.jpg`;
+  a.title = `${two(d.getHours())}:${two(d.getMinutes())} / ${Math.round(score*100)}% — タップで保存`;
+  const img = document.createElement('img');
+  img.alt = '四つ葉の候補'; img.src = url;
+  const sp = document.createElement('span');
+  sp.textContent = Math.round(score*100) + '%';
+  a.append(img, sp);
+  strip.prepend(a); strip.classList.add('on');
+  while (strip.children.length > 24) strip.lastElementChild.remove();
+}
+
+/* ============================================================= camera === */
+const embedded = (() => { try { return window.self !== window.top; } catch(e){ return true; } })();
+function policyBlocked(){
+  const fp = document.featurePolicy || document.permissionsPolicy;
+  try { if (fp && fp.allowsFeature) return !fp.allowsFeature('camera'); } catch(e){}
+  return null;
+}
+async function diagnose(err){
+  const L = [];
+  L.push('error       : ' + (err ? (err.name||'unknown') + (err.message ? ' — '+err.message : '') : '—'));
+  L.push('secure ctx  : ' + window.isSecureContext);
+  L.push('embedded    : ' + embedded + (embedded ? '  (iframe)' : ''));
+  const pol = policyBlocked();
+  L.push('camera policy: ' + (pol===null ? '不明' : pol ? 'ブロック' : '許可'));
+  try{ if (navigator.permissions){
+    const st = await navigator.permissions.query({name:'camera'});
+    L.push('permission  : ' + st.state);
+  }}catch(e){ L.push('permission  : 照会不可'); }
+  try{
+    const devs = await navigator.mediaDevices.enumerateDevices();
+    const cams = devs.filter(d=>d.kind==='videoinput');
+    L.push('cameras     : ' + cams.length);
+  }catch(e){ L.push('cameras     : 列挙不可'); }
+  L.push('url         : ' + location.href);
+  L.push('ua          : ' + navigator.userAgent);
+  return L.join('\n');
+}
+async function showFailure(err){
+  const pol = policyBlocked();
+  let msg;
+  if (!window.isSecureContext) msg = 'この接続では端末がカメラを許可しません。https のページで開き直してください。';
+  else if (embedded && (pol === true || (err && err.name === 'NotAllowedError')))
+    msg = 'ページが枠（iframe）の中で表示されているため、カメラが使えません。ブラウザ側ではなく埋め込み側の制限です。\n'
+        + '「別タブで開き直す」で直ることがあります。駄目なら「カメラで1枚撮る」で写真を撮れば同じ判定をかけられます。';
+  else if (err && err.name === 'NotAllowedError')
+    msg = 'カメラの使用が許可されませんでした。アドレスバーの左のアイコンからカメラを「許可」に変えてください。';
+  else if (err && err.name === 'NotFoundError') msg = 'カメラが見つかりませんでした。';
+  else if (err && err.name === 'NotReadableError') msg = '他のアプリがカメラを使用中です。';
+  else msg = 'カメラを起動できませんでした（' + ((err&&err.name)||'error') + '）。';
+  errline.hidden = false; errline.textContent = msg;
+  curtain.classList.remove('gone');
+  rescue.hidden = false; diag.hidden = false;
+  diag.textContent = await diagnose(err);
+}
+
+async function start(){
+  errline.hidden = true; rescue.hidden = true; diag.hidden = true;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia)
+    return showFailure({name:'Unsupported'});
+  btnRun.disabled = true; btnRun.textContent = '起動中…';
+  try{
+    stream = await navigator.mediaDevices.getUserMedia({
+      video:{ facingMode:{ideal:'environment'}, width:{ideal:1280}, height:{ideal:960} },
+      audio:false });
+  }catch(e){
+    btnRun.disabled = false; btnRun.textContent = 'スキャン開始';
+    return showFailure(e);
+  }
+  video.srcObject = stream;
+  await video.play().catch(()=>{});
+  stillMode(false);
+  curtain.classList.add('gone');
+  readout.classList.add('on');
+  btnRun.disabled = false; btnRun.textContent = '停止'; btnRun.classList.add('stop');
+  lamp.className = 'lamp live';
+  setupTorch();
+  try{ audio = audio || new (window.AudioContext||window.webkitAudioContext)();
+       if (audio.state==='suspended') audio.resume(); }catch(e){}
+  running = true; lastRun = 0; ema = 0; streak = 0; rate = 0;
+  fitOverlay();
+  rafId = requestAnimationFrame(loop);
+}
+
+function stop(){
+  running = false; cancelAnimationFrame(rafId);
+  if (stream){ stream.getTracks().forEach(t=>t.stop()); stream = null; }
+  video.srcObject = null;
+  octx.clearRect(0,0,overlay.width,overlay.height);
+  curtain.classList.remove('gone');
+  readout.classList.remove('on');
+  btnRun.textContent = 'スキャン開始'; btnRun.classList.remove('stop');
+  btnTorch.hidden = true; lamp.className = 'lamp'; statFps.textContent = '—';
+}
+
+let torchTrack = null;
+function setupTorch(){
+  try{
+    const t = stream.getVideoTracks()[0];
+    const caps = t.getCapabilities ? t.getCapabilities() : {};
+    if (caps && 'torch' in caps){ torchTrack = t; btnTorch.hidden = false; }
+  }catch(e){}
+}
+btnTorch.addEventListener('click', async () => {
+  if (!torchTrack) return;
+  const on = !btnTorch.classList.contains('on');
+  try{ await torchTrack.applyConstraints({advanced:[{torch:on}]});
+       btnTorch.classList.toggle('on', on); }
+  catch(e){ btnTorch.hidden = true; }
+});
+
+btnRun.addEventListener('click', () => (running || stream) ? stop() : start());
+btnNewTab.addEventListener('click', () => {
+  const u = location.href;
+  const w = window.open(u, '_blank', 'noopener');
+  if (w) return;
+  try{ window.top.location.href = u; }catch(e){ flashToast('URLを長押しでコピー'); }
+});
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && running){ running = false; cancelAnimationFrame(rafId); }
+  else if (!document.hidden && stream && !running){
+    running = true; lastRun = 0; rafId = requestAnimationFrame(loop);
+  }
+});
+
+/* ========================================================= still photo == */
+function stillMode(on){
+  still.style.display = on ? 'block' : 'none';
+  video.style.display = on ? 'none' : 'block';
+}
+
+async function analysePhoto(file){
+  if (!file) return;
+  const src = URL.createObjectURL(file);
+  const img = new Image();
+  img.onerror = () => { URL.revokeObjectURL(src); flashToast('画像を読み込めません'); };
+  img.onload = async () => {
+    URL.revokeObjectURL(src);
+    if (running) stop();
+    const W = 640, H = Math.round(W * img.height / img.width);
+    still.width = W; still.height = H;
+    sctx.drawImage(img, 0, 0, W, H);
+    stillMode(true);
+    curtain.classList.add('gone');
+    readout.classList.add('on');
+    errline.hidden = true; rescue.hidden = true; diag.hidden = true;
+    octx.clearRect(0,0,overlay.width,overlay.height);
+
+    const base = Math.min(W, H) * (P.box/100);
+    const wins = [];
+    for (const sf of [0.75, 1.0, 1.35]){
+      const side = base * sf;
+      if (side < 40 || side > Math.min(W,H)) continue;
+      const step = Math.max(16, side*0.34);
+      for (let y=0; y+side<=H; y+=step)
+        for (let x=0; x+side<=W; x+=step) wins.push([x,y,side]);
+    }
+    hint.textContent = `調べています… 0 / ${wins.length}`;
+    verdictNum.textContent = '—';
+
+    const results = [];
+    for (let i=0; i<wins.length; i++){
+      const [x,y,side] = wins[i];
+      pctx.drawImage(still, x, y, side, side, 0, 0, S, S);
+      const p = net.predict(pctx.getImageData(0,0,S,S).data)[net.fourIdx];
+      results.push([p,x,y,side]);
+      if (i % 12 === 0){
+        hint.textContent = `調べています… ${i} / ${wins.length}`;
+        await new Promise(r => setTimeout(r, 0));
+      }
+    }
+    results.sort((a,b)=>b[0]-a[0]);
+
+    const thr = P.thr/100;
+    const kept = [];
+    for (const r of results){
+      if (r[0] < thr) break;
+      if (kept.some(k => Math.abs(k[1]-r[1]) < k[3]*0.6 && Math.abs(k[2]-r[2]) < k[3]*0.6)) continue;
+      kept.push(r);
+      if (kept.length >= 8) break;
+    }
+
+    sctx.lineWidth = 4; sctx.strokeStyle = '#F2B441';
+    sctx.font = '600 16px ui-monospace, Menlo, monospace';
+    sctx.fillStyle = '#F2B441';
+    for (const [p,x,y,side] of kept){
+      sctx.strokeRect(x, y, side, side);
+      sctx.fillText((p*100).toFixed(0)+'%', x+6, y+20);
+    }
+    const best = results.length ? results[0][0] : 0;
+    verdictNum.textContent = (best*100).toFixed(0)+'%';
+    meterFill.style.width = (best*100).toFixed(1)+'%';
+    const hot = best >= thr;
+    verdict.classList.toggle('hot', hot); meter.classList.toggle('hot', hot);
+    hint.textContent = kept.length
+      ? `候補 ${kept.length} 件 — 目で数えて確かめてください`
+      : `候補なし（最高 ${(best*100).toFixed(0)}%）。株が小さすぎるなら枠の大きさを変えて再読込。`;
+    flashToast(kept.length ? `候補 ${kept.length} 件` : '候補なし');
+    if (kept.length && P.shot){
+      const [p,x,y,side] = kept[0];
+      grab.width = 280; grab.height = 280;
+      gctx.drawImage(still, x, y, side, side, 0, 0, 280, 280);
+      addShot(grab.toDataURL('image/jpeg',0.9), p);
+    }
+  };
+  img.src = src;
+}
+for (const inp of [fileIn, shotIn]){
+  inp.addEventListener('change', () => { const f = inp.files && inp.files[0]; inp.value=''; analysePhoto(f); });
+}
+
+/* =========================================================== settings === */
+const sliders = [
+  ['sThr','vThr','thr', v => v + '%'],
+  ['sHold','vHold','hold', v => v + ' 回'],
+  ['sBox','vBox','box', v => v + '%'],
+];
+sliders.forEach(([sid,vid,key,fmt]) => {
+  const s = $(sid), out = $(vid);
+  const sync = () => { P[key] = +s.value; out.textContent = fmt(+s.value); streak = 0; };
+  s.addEventListener('input', sync); s._sync = sync; sync();
+});
+const toggles = [['tSound','sound'],['tVib','vib'],['tShot','shot']];
+toggles.forEach(([id,key]) => {
+  const b = $(id);
+  b.addEventListener('click', () => { P[key] = !P[key]; b.classList.toggle('on', P[key]); });
+  b.classList.toggle('on', P[key]);
+});
+const bump = d => { const s = $('sBox'); s.value = Math.min(90, Math.max(25, +s.value + d)); s._sync(); };
+btnPlus.addEventListener('click', () => bump(+6));
+btnMinus.addEventListener('click', () => bump(-6));
+
+btnCfg.addEventListener('click', () => {
+  sheet.classList.toggle('open');
+  btnCfg.classList.toggle('on', sheet.classList.contains('open'));
+});
+btnClose.addEventListener('click', () => { sheet.classList.remove('open'); btnCfg.classList.remove('on'); });
+btnReset.addEventListener('click', () => {
+  Object.assign(P, DEFAULTS);
+  sliders.forEach(([sid,,key]) => { $(sid).value = P[key]; $(sid)._sync(); });
+  toggles.forEach(([id,key]) => $(id).classList.toggle('on', P[key]));
+  flashToast('初期値に戻しました');
+});
+
+fitOverlay();
+
+/* Installable + offline, but only when served as a real page. Inside the
+   artifact iframe there is no manifest to fetch and the CSP blocks workers,
+   so skip it there rather than throwing. */
+if (!embedded && location.protocol === 'https:'){
+  const link = document.createElement('link');
+  link.rel = 'manifest'; link.href = 'manifest.webmanifest';
+  document.head.appendChild(link);
+  if ('serviceWorker' in navigator){
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('sw.js').catch(() => {});
+    });
+  }
+}
+})();
+</script>

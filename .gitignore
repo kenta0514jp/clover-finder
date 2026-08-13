@@ -1,0 +1,5 @@
+# the training set is 55 MB and already published by its author — fetch it with
+# tools/fetch_data.sh instead of committing a copy
+data/
+__pycache__/
+*.pyc

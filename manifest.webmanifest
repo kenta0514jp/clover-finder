@@ -1,0 +1,14 @@
+{
+  "name": "Clover Scope — 四つ葉ファインダー",
+  "short_name": "Clover Scope",
+  "description": "カメラで1株ずつクローバーを判定する野外用ファインダー",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0A0E0B",
+  "theme_color": "#0A0E0B",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

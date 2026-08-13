@@ -25,17 +25,34 @@ const Detector = (() => {
     imgsz = opts.imgsz || 640;
     if (opts.names) names = opts.names;
 
-    ort.env.wasm.wasmPaths = 'vendor/ort/';
+    /* Absolute, resolved against the document. A bare 'vendor/ort/' is read
+       relative to the *page* URL, so visiting the site without the trailing
+       slash sends the runtime to the domain root and every fetch 404s. */
+    const here = u => new URL(u, document.baseURI).href;
+    ort.env.wasm.wasmPaths = here('vendor/ort/');
     /* cross-origin isolation is not set on GitHub Pages, so threads are
        unavailable; asking for them anyway just produces a warning */
     ort.env.wasm.numThreads = 1;
-    ort.env.wasm.simd = true;
     ort.env.logLevel = 'error';
 
-    session = await ort.InferenceSession.create(opts.model || 'model.onnx', {
-      executionProviders: ['wasm'],
-      graphOptimizationLevel: 'all',
-    });
+    /* Fetch the weights ourselves rather than handing ORT a URL: a failed
+       download then says so plainly instead of surfacing as an opaque session
+       error, and the bytes are the same either way. */
+    const url = here(opts.model || 'model.onnx');
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`model.onnx ${res.status} ${res.statusText}`);
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    if (bytes.length < 1024) throw new Error(`model.onnx too small (${bytes.length} B)`);
+
+    try{
+      session = await ort.InferenceSession.create(bytes, {
+        executionProviders: ['wasm'], graphOptimizationLevel: 'all' });
+    }catch(e){
+      /* graph optimisation is the part most likely to run out of room on a
+         phone; the unoptimised graph gives the same answers, just slower */
+      session = await ort.InferenceSession.create(bytes, {
+        executionProviders: ['wasm'], graphOptimizationLevel: 'basic' });
+    }
     inputName = session.inputNames[0];
 
     pad.width = imgsz; pad.height = imgsz;

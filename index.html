@@ -1,3 +1,4 @@
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Clover Scope — 四つ葉ファインダー</title>
 
 <style>
@@ -960,6 +961,24 @@ function setEngine(kind, line, tag){
     setEngine('detector', `検出器 YOLOv8n / ${info.imgsz}px — 準備完了`, '検出器');
   }catch(e){
     setEngine('classifier', '検出器を読み込めません — 簡易判定で動作中', '簡易');
+    /* Swallowing this error is what let the app spend an evening reporting
+       four-leaf on a computer monitor. Put it on the screen. */
+    const L = ['detector load failed',
+               (e && (e.name || 'Error')) + ': ' + ((e && e.message) || e)];
+    for (const u of ['model.onnx', 'vendor/ort/ort.wasm.min.js',
+                     'vendor/ort/ort-wasm-simd-threaded.mjs',
+                     'vendor/ort/ort-wasm-simd-threaded.wasm']){
+      try{
+        const r = await fetch(new URL(u, document.baseURI).href, {method:'GET'});
+        const b = r.ok ? (await r.blob()).size : 0;
+        L.push(`${u.split('/').pop()}: ${r.status} ${b ? (b/1048576).toFixed(1)+'MB' : ''} ${r.headers.get('content-type')||''}`);
+      }catch(err){ L.push(`${u.split('/').pop()}: ${err.name || 'fetch failed'}`); }
+    }
+    L.push('wasm: ' + (typeof WebAssembly === 'object' ? 'あり' : 'なし') +
+           '  simd: ' + (WebAssembly.validate ? 'validate可' : '不明'));
+    L.push('memory: ' + (navigator.deviceMemory ? navigator.deviceMemory + 'GB' : '不明'));
+    diag.hidden = false;
+    diag.textContent = L.join('\n');
   }
 })();
 

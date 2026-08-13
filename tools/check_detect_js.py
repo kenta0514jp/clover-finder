@@ -138,6 +138,8 @@ def main():
                     help='letterbox colour the canvas is cleared to')
     ap.add_argument('--min-veg', type=float, default=0.0,
                     help='drop boxes whose foliage fraction is below this')
+    ap.add_argument('--model', default='model.onnx',
+                    help='which exported graph to run')
     ap.add_argument('--dir', default='testdata',
                     help='folder of jpgs to run over')
     ap.add_argument('--out', help='contact sheet of the boxes, as the app draws them')
@@ -149,7 +151,7 @@ def main():
     ctx.eval(js_decode_source())
     run = ctx.get('run')
 
-    sess = ort.InferenceSession(os.path.join(BASE, 'model.onnx'),
+    sess = ort.InferenceSession(os.path.join(BASE, a.model),
                                 providers=['CPUExecutionProvider'])
     iname = sess.get_inputs()[0].name
 

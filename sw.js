@@ -10,7 +10,7 @@
  *           when the model does. Cache first; the cache name carries the
  *           version, so bumping CACHE is what ships new weights.
  */
-const CACHE = 'clover-scope-v3';
+const CACHE = 'clover-scope-v4';   // v4: detector retrained with backgrounds
 
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icon.svg', './detect.js'];
 const HEAVY = [

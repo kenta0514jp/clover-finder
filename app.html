@@ -254,7 +254,8 @@
     <div class="ctl">
       <div class="row"><label for="sRes">解析の解像度</label><span class="val" id="vRes"></span></div>
       <input type="range" id="sRes" min="0" max="2" step="1" value="1">
-      <p class="note">下げると速くなりますが、小さく写った株を取りこぼします。画面上の「s/枚」を見て決めてください。</p>
+      <p class="note">既定の416が実測で最も良く、最も速い値です。上げると遅くなり、
+        誤検出も増えました。変える理由は特にありません。</p>
     </div>
 
     <h2>通知</h2>
@@ -342,14 +343,15 @@ const wctx = work.getContext('2d', { willReadFrequently:true });
 const grab = document.createElement('canvas');
 const gctx = grab.getContext('2d');
 
-const DEFAULTS = { thr:25, marks:5, res:1, sound:true, vib:true, shot:true, three:false };
+const DEFAULTS = { thr:25, marks:5, res:0, sound:true, vib:true, shot:true, three:false };
 const P = Object.assign({}, DEFAULTS);
 
-/* Measured on the nine held-out photos: 512 found four-leaf in 4 of 6 with no
-   false box at all, 640 in 3 of 6 with 0.7 per clean frame. Smaller is also
-   faster, so 512 is the default rather than a compromise. */
+/* 416 is not a compromise — it measured best. On the nine held-out photos it
+   found the four-leaf in all six and drew no false box; 512 found five, 640
+   found four. On 587 photographs with no clover in them it drew 2 false boxes
+   against 640's 3. Smaller happens to also be the fastest. */
 const RES_PX = [416, 512, 640];
-const RES_LABEL = ['速い (416)', '標準 (512)', '細かい (640)'];
+const RES_LABEL = ['416（実測で最良）', '512', '640（最も遅い）'];
 
 /* A four-leaf clover is a green plant. A box holding almost no foliage is
    wrong whatever the network says — every training image is a photograph of

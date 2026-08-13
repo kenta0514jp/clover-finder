@@ -106,6 +106,30 @@ def copy_voc(counts):
         counts['img_' + split] = counts.get('img_' + split, 0) + 1
 
 
+def copy_bg(counts):
+    """Photographs with no clover in them, carried in with no label file.
+
+    Ultralytics reads an unlabelled image as background: everything in it is a
+    negative. Without these, every training image is a photograph of clover and
+    the detector is never given a reason to answer "not a plant" — pointed at a
+    desk it reported four-leaf at 82% on a computer monitor.
+    """
+    src = os.path.join(DATA, 'bg')
+    if not os.path.isdir(src):
+        print('no background set — run tools/fetch_bg.py')
+        return
+    files = sorted(glob.glob(os.path.join(src, '*.jpg')))
+    rng = random.Random(20260814)
+    rng.shuffle(files)
+    n_val = max(1, int(len(files) * 0.15))
+    for i, f in enumerate(files):
+        split = 'val' if i < n_val else 'train'
+        name = 'bg_' + os.path.basename(f)
+        shutil.copy(f, os.path.join(OUT, split, 'images', name))
+        # no label file at all: that is what marks it as background
+        counts['bg_' + split] = counts.get('bg_' + split, 0) + 1
+
+
 def main():
     if os.path.isdir(OUT):
         shutil.rmtree(OUT)
@@ -118,6 +142,7 @@ def main():
         else:
             print('missing', root)
     copy_voc(counts)
+    copy_bg(counts)
 
     with open(os.path.join(OUT, 'data.yaml'), 'w') as f:
         f.write(f'path: {os.path.abspath(OUT)}\n'
@@ -125,6 +150,8 @@ def main():
                 f'nc: {len(NAMES)}\nnames: {NAMES}\n')
 
     print(f'images  train {counts.get("img_train",0)}  val {counts.get("img_val",0)}')
+    print(f'背景    train {counts.get("bg_train",0)}  val {counts.get("bg_val",0)}'
+          f'   ({counts.get("bg_train",0)/max(1,counts.get("img_train",0)+counts.get("bg_train",0))*100:.0f}% of train)')
     for i, n in enumerate(NAMES):
         print(f'boxes   {n:9s} {counts.get(i,0)}')
     print('->', os.path.join(OUT, 'data.yaml'))

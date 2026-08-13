@@ -3,7 +3,7 @@
 スマホのカメラを1株ずつクローバーに向けると、四つ葉らしさをその場で判定します。
 通信は一切ありません。判定は端末の中で完結します。
 
-**→ https://USER.github.io/clover-finder/**
+**→ https://kenta0514jp.github.io/clover-finder/**
 
 インストール不要。ホーム画面に追加すればオフラインでも動きます。
 

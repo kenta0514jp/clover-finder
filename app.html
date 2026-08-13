@@ -280,6 +280,10 @@
       4 leaf clover detect — いずれも CC BY 4.0。
     </p>
 
+    <h2>エンジン</h2>
+    <p class="fineprint" id="engineNote">…</p>
+    <pre class="diag" id="diag2" hidden></pre>
+
     <div class="sheet-foot">
       <button id="btnReset">初期値に戻す</button>
       <button id="btnClose">閉じる</button>
@@ -774,7 +778,12 @@ btnReset.addEventListener('click', () => {
 /* ============================================================ engine ==== */
 /* The detector is ~12 MB of weights plus a WASM runtime, so the page is usable
    (and honest about which engine it has) before the download finishes. */
+/* stamped by tools/build_app.py — so the settings sheet can say which
+   build is actually running, which is the only way to tell a stale
+   service-worker cache from a real fault */
+const BUILD = '__BUILD__';
 const engineline = $('engineline'), tagEngine = $('tagEngine');
+const engineNote = $('engineNote'), diag2 = $('diag2');
 function setEngine(kind, line, tag){
   engine = kind;
   const cls = kind === 'detector' ? 'ok' : kind === 'loading' ? '' : 'fallback';
@@ -782,6 +791,17 @@ function setEngine(kind, line, tag){
   engineline.textContent = line;
   tagEngine.className = 'tag ' + cls;
   tagEngine.textContent = tag;
+  /* The start screen is hidden the moment scanning begins, so the settings
+     sheet carries the same answer — otherwise a silent fallback is only
+     visible in the seconds before it starts being wrong. */
+  engineNote.textContent = (kind === 'detector'
+    ? line + '。枠は株に乗ります。'
+    : kind === 'loading' ? line
+    : line + '。分類器には位置の学習がないので、枠は正しい場所を指しません。')
+    + '  [build ' + BUILD + ']';
+}
+function showDiag(lines){
+  for (const el of [diag, diag2]){ el.hidden = false; el.textContent = lines; }
 }
 (async () => {
   if (typeof ort === 'undefined' || typeof Detector === 'undefined'){
@@ -810,8 +830,8 @@ function setEngine(kind, line, tag){
     L.push('wasm: ' + (typeof WebAssembly === 'object' ? 'あり' : 'なし') +
            '  simd: ' + (WebAssembly.validate ? 'validate可' : '不明'));
     L.push('memory: ' + (navigator.deviceMemory ? navigator.deviceMemory + 'GB' : '不明'));
-    diag.hidden = false;
-    diag.textContent = L.join('\n');
+    L.push('build: ' + BUILD);
+    showDiag(L.join('\n'));
   }
 })();
 

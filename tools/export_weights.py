@@ -36,7 +36,7 @@ def b64(arr):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--model', default=os.path.join(BASE, 'data', 'tinynet2.pt'))
+    ap.add_argument('--model', default=os.path.join(BASE, 'data', 'valid2.pt'))
     ap.add_argument('--out', default=os.path.join(BASE, 'model.json'))
     a = ap.parse_args()
 
@@ -58,8 +58,11 @@ def main():
     fw = sd['fc.weight'].numpy().astype(np.float32)
     fb = sd['fc.bias'].numpy().astype(np.float32)
 
+    from dense import feat_size, CELL
     model = dict(
         size=SIZE,
+        feat=feat_size(net),
+        cell=CELL,
         classes=ck['classes'],
         four_idx=int(ck['four_idx']),
         layers=layers,
@@ -83,15 +86,14 @@ def main():
     def conv3(inp, w, b):
         C, H, W = inp.shape
         O = w.shape[0]
-        pad = np.zeros((C, H + 2, W + 2), np.float32)
-        pad[:, 1:-1, 1:-1] = inp
-        out = np.empty((O, H, W), np.float32)
+        Ho, Wo = H - 2, W - 2            # valid: no padding
+        out = np.empty((O, Ho, Wo), np.float32)
         for o in range(O):
-            acc = np.full((H, W), b[o], np.float32)
+            acc = np.full((Ho, Wo), b[o], np.float32)
             for c in range(C):
                 for dy in range(3):
                     for dx in range(3):
-                        acc += w[o, c, dy, dx] * pad[c, dy:dy+H, dx:dx+W]
+                        acc += w[o, c, dy, dx] * inp[c, dy:dy+Ho, dx:dx+Wo]
             out[o] = acc
         return out
 

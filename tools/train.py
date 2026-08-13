@@ -17,18 +17,28 @@ from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 
 BASE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
-CROPS = os.path.join(BASE, 'data', 'crops')
+CROPS = os.path.join(BASE, 'data', 'crops')   # overridden by --data
 SIZE = 96
 
 
 class TinyNet(nn.Module):
+    """No padding anywhere, on purpose.
+
+    With 'same' padding a 96x96 crop sees zeros at its border while the same
+    window inside a whole frame sees real pixels, so a dense whole-frame pass
+    scores differently from the crops the network was validated on — measured
+    at 14 points mean, 50 points worst. Valid convolutions make the two
+    mathematically identical, so what gets tested is what ships.
+
+    96 -> 94 -> 47 -> 45 -> 22 -> 20 -> 10 -> 8 -> 4
+    """
     def __init__(self, nc=2):
         super().__init__()
         ch = [3, 16, 32, 48, 64]
         self.convs = nn.ModuleList()
         self.bns = nn.ModuleList()
         for i in range(4):
-            self.convs.append(nn.Conv2d(ch[i], ch[i+1], 3, padding=1, bias=False))
+            self.convs.append(nn.Conv2d(ch[i], ch[i+1], 3, padding=0, bias=False))
             self.bns.append(nn.BatchNorm2d(ch[i+1]))
         self.drop = nn.Dropout(0.35)
         self.fc = nn.Linear(ch[-1], nc)
@@ -40,7 +50,7 @@ class TinyNet(nn.Module):
         return self.fc(self.drop(x))
 
 
-def loaders(batch=64, workers=4):
+def loaders(batch=64, workers=4, root=None):
     # full-circle rotation matters: a four-leaf is 90-degree symmetric and a
     # three-leaf 120-degree, so orientation must never become the cue
     train_tf = transforms.Compose([
@@ -52,8 +62,9 @@ def loaders(batch=64, workers=4):
         transforms.ToTensor(),
     ])
     val_tf = transforms.Compose([transforms.ToTensor()])
-    tr = datasets.ImageFolder(os.path.join(CROPS, 'train'), train_tf)
-    va = datasets.ImageFolder(os.path.join(CROPS, 'val'), val_tf)
+    root = root or CROPS
+    tr = datasets.ImageFolder(os.path.join(root, 'train'), train_tf)
+    va = datasets.ImageFolder(os.path.join(root, 'val'), val_tf)
     return (DataLoader(tr, batch, shuffle=True, num_workers=workers, drop_last=True),
             DataLoader(va, batch, shuffle=False, num_workers=workers),
             tr.classes)
@@ -88,10 +99,11 @@ def main():
     ap.add_argument('--lr', type=float, default=3e-3)
     ap.add_argument('--batch', type=int, default=64)
     ap.add_argument('--out', default=os.path.join(BASE, 'data', 'tinynet.pt'))
+    ap.add_argument('--data', default=CROPS)
     a = ap.parse_args()
 
     torch.manual_seed(20260813); random.seed(20260813)
-    tr, va, classes = loaders(a.batch)
+    tr, va, classes = loaders(a.batch, root=a.data)
     four_idx = classes.index('four')
     print('classes:', classes, ' four_idx =', four_idx)
 
@@ -101,7 +113,7 @@ def main():
 
     # hard-negative mining leaves the classes lopsided; weight the loss back
     counts = torch.tensor(
-        [len(os.listdir(os.path.join(CROPS, 'train', c))) for c in classes],
+        [len(os.listdir(os.path.join(a.data, 'train', c))) for c in classes],
         dtype=torch.float)
     cls_w = counts.sum() / (len(classes) * counts)
     print('train counts:', {c: int(n) for c, n in zip(classes, counts)},

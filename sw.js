@@ -1,10 +1,22 @@
 /* Offline cache — a clover lawn is often a park with no signal.
    Bumping CACHE invalidates everything from the previous version. */
-const CACHE = 'clover-scope-v1';
-const ASSETS = ['./', './index.html', './manifest.webmanifest', './icon.svg'];
+const CACHE = 'clover-scope-v2';
+/* the shell must all arrive or the install fails */
+const SHELL = ['./', './index.html', './manifest.webmanifest', './icon.svg', './detect.js'];
+/* ~25 MB of runtime and weights — fetched best-effort so a flaky connection
+   still leaves a working (if online-only) app */
+const HEAVY = [
+  './model.onnx',
+  './vendor/ort/ort.wasm.min.js',
+  './vendor/ort/ort-wasm-simd-threaded.mjs',
+  './vendor/ort/ort-wasm-simd-threaded.wasm',
+];
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(CACHE)
+    .then(c => c.addAll(SHELL)
+      .then(() => Promise.all(HEAVY.map(u => c.add(u).catch(() => {})))))
+    .then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', e => {

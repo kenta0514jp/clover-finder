@@ -28,7 +28,7 @@ def js_decode_source():
     """detect.js's iou/nms, verbatim, plus the decode loop it drives."""
     src = open(os.path.join(BASE, 'detect.js')).read()
     keep = []
-    for fn in ('function iou(', 'function nms('):
+    for fn in ('function iou(', 'function nms(', 'function vegFrac('):
         i = src.index(fn)
         k = src.index('{', i)
         depth = 0
@@ -39,8 +39,8 @@ def js_decode_source():
                 if depth == 0: break
             k += 1
         keep.append(src[i:k + 1])
-    return '\n'.join(keep) + r'''
-function decode(v, anchors, nc, conf, iouThr, map, srcW, srcH){
+    return 'var veg = null, imgsz = 0;\n' + '\n'.join(keep) + r'''
+function decode(v, anchors, nc, conf, iouThr, minVeg, map, srcW, srcH){
   const dets = [];
   for (let i = 0; i < anchors; i++){
     let best = -1, bestScore = conf;
@@ -54,18 +54,31 @@ function decode(v, anchors, nc, conf, iouThr, map, srcW, srcH){
     dets.push({ cls: best, score: bestScore,
                 x0: cx - w/2, y0: cy - h/2, x1: cx + w/2, y1: cy + h/2 });
   }
-  return nms(dets, iouThr).map(d => ({
-    cls: d.cls, score: d.score,
+  return nms(dets, iouThr).map(d => ({ ...d, veg: vegFrac(d) }))
+    .filter(d => d.veg >= minVeg).map(d => ({
+    cls: d.cls, score: d.score, veg: d.veg,
     x0: (d.x0 - map.dx) / map.s / srcW, y0: (d.y0 - map.dy) / map.s / srcH,
     x1: (d.x1 - map.dx) / map.s / srcW, y1: (d.y1 - map.dy) / map.s / srcH,
   }));
 }
 function run(p){
   p = JSON.parse(p);
-  return JSON.stringify(decode(p.v, p.anchors, p.nc, p.conf, p.iou,
+  imgsz = p.imgsz; veg = p.veg;
+  return JSON.stringify(decode(p.v, p.anchors, p.nc, p.conf, p.iou, p.minVeg,
                                p.map, p.srcW, p.srcH));
 }
 '''
+
+
+def veg_mask(arr):
+    """Excess green, same rule as detect.js: positive on foliage, negative on
+    skin, paper, screens, asphalt and most fabric."""
+    a = arr.astype(np.int32)
+    r, g, b = a[:, :, 0], a[:, :, 1], a[:, :, 2]
+    s = r + g + b
+    with np.errstate(divide='ignore', invalid='ignore'):
+        exg = np.where(s > 0, (2*g - r - b) / np.maximum(s, 1), -1.0)
+    return ((s > 24) & (exg > 0.08)).astype(np.uint8)
 
 
 def np_decode(out, conf, iou_thr, m, W, H):
@@ -123,6 +136,10 @@ def main():
     ap.add_argument('--iou', type=float, default=0.45)
     ap.add_argument('--fill', default='0,0,0',
                     help='letterbox colour the canvas is cleared to')
+    ap.add_argument('--min-veg', type=float, default=0.0,
+                    help='drop boxes whose foliage fraction is below this')
+    ap.add_argument('--dir', default='testdata',
+                    help='folder of jpgs to run over')
     ap.add_argument('--out', help='contact sheet of the boxes, as the app draws them')
     a = ap.parse_args()
     fill = tuple(int(v) for v in a.fill.split(','))
@@ -136,7 +153,7 @@ def main():
                                 providers=['CPUExecutionProvider'])
     iname = sess.get_inputs()[0].name
 
-    files = sorted(glob.glob(os.path.join(BASE, 'testdata', '*.jpg')))
+    files = sorted(glob.glob(os.path.join(BASE, a.dir, '*.jpg')))
     print(f'imgsz {a.imgsz}  conf {a.conf}  iou {a.iou}  pad {fill}\n')
     print(f'{"file":28s} {"truth":>6s} {"4":>3s} {"3":>3s} {"best4":>7s}  '
           f'{"js-vs-numpy (px)":>16s}')
@@ -155,17 +172,22 @@ def main():
 
         js = json.loads(run(json.dumps({
             'v': out[0].reshape(-1).tolist(), 'anchors': anchors, 'nc': rows - 4,
-            'conf': a.conf, 'iou': a.iou, 'map': m, 'srcW': W, 'srcH': H})))
+            'conf': a.conf, 'iou': a.iou, 'minVeg': a.min_veg, 'imgsz': a.imgsz,
+            'veg': veg_mask(np.asarray(pad)).reshape(-1).tolist(),
+            'map': m, 'srcW': W, 'srcH': H})))
         npd = np_decode(out, a.conf, a.iou, m, W, H)
 
-        if len(js) != len(npd):
+        if a.min_veg > 0:
+            err = float('nan')      # numpy reference has no gate to compare to
+        elif len(js) != len(npd):
             err = float('inf')
         else:
             js.sort(key=lambda d: -d['score'])
             npd.sort(key=lambda d: -d['score'])
             err = max([0.0] + [abs(j[k]*(W if 'x' in k else H) - n[k]*(W if 'x' in k else H))
                                for j, n in zip(js, npd) for k in ('x0','y0','x1','y1')])
-        worst = max(worst, err)
+        if err == err:                      # NaN means the gate is on
+            worst = max(worst, err)
 
         name = os.path.basename(f).rsplit('.', 1)[0]
         truth = '4-leaf' if name.startswith('p') else 'none'
@@ -174,7 +196,8 @@ def main():
         best4 = max([d['score'] for d in f4], default=0.0)
         if truth == '4-leaf' and f4: hit += 1
         if truth == 'none': fp += len(f4)
-        shown = 'COUNT DIFFERS' if err == float('inf') else f'{err:.2e}'
+        shown = ('gate on' if err != err else
+                 'COUNT DIFFERS' if err == float('inf') else f'{err:.2e}')
         print(f'{name:28s} {truth:>6s} {len(f4):3d} {len(f3):3d} '
               f'{best4*100:6.1f}%  {shown:>16s}')
 

@@ -70,15 +70,38 @@ const Detector = (() => {
     return { s, dx, dy };
   }
 
+  /* Excess green, thresholded, kept per pixel of the letterboxed frame.
+     ExG = 2G - R - B on channels normalised by their sum: positive on foliage,
+     negative on skin, paper, screens, asphalt and most fabric.
+     Every training image is a photograph of clover, so the network was never
+     given a reason to answer "not a plant" — this is the missing half, and it
+     is cheap because the pixels are already in hand for the tensor. */
+  let veg = null;
   function toTensor(){
     const d = pctx.getImageData(0, 0, imgsz, imgsz).data;
     const n = imgsz * imgsz;
+    if (!veg || veg.length !== n) veg = new Uint8Array(n);
     for (let i = 0, p = 0; i < n; i++, p += 4){
-      chw[i]         = d[p]     / 255;
-      chw[n + i]     = d[p + 1] / 255;
-      chw[2 * n + i] = d[p + 2] / 255;
+      const r = d[p], g = d[p + 1], b = d[p + 2];
+      chw[i]         = r / 255;
+      chw[n + i]     = g / 255;
+      chw[2 * n + i] = b / 255;
+      const s = r + g + b;
+      veg[i] = s > 24 && (2 * g - r - b) / s > 0.08 ? 1 : 0;
     }
     return new ort.Tensor('float32', chw, [1, 3, imgsz, imgsz]);
+  }
+
+  /* fraction of a letterboxed-pixel box that looks like foliage */
+  function vegFrac(d){
+    const x0 = Math.max(0, Math.floor(d.x0)), y0 = Math.max(0, Math.floor(d.y0));
+    const x1 = Math.min(imgsz, Math.ceil(d.x1)), y1 = Math.min(imgsz, Math.ceil(d.y1));
+    if (x1 <= x0 || y1 <= y0) return 0;
+    let hit = 0, tot = 0;
+    const step = Math.max(1, Math.floor(Math.min(x1 - x0, y1 - y0) / 24));
+    for (let y = y0; y < y1; y += step)
+      for (let x = x0; x < x1; x += step){ hit += veg[y * imgsz + x]; tot++; }
+    return tot ? hit / tot : 0;
   }
 
   function iou(a, b){
@@ -108,6 +131,7 @@ const Detector = (() => {
     if (!session) return [];
     const conf = opts.conf ?? 0.25;
     const iouThr = opts.iou ?? 0.45;
+    const minVeg = opts.minVeg ?? 0;
     const map = letterbox(drawFn, srcW, srcH);
     const out = await session.run({ [inputName]: toTensor() });
     const t = out[session.outputNames[0]];
@@ -131,10 +155,12 @@ const Detector = (() => {
       });
     }
 
-    return nms(dets, iouThr).map(d => ({
+    return nms(dets, iouThr).map(d => ({ ...d, veg: vegFrac(d) })
+    ).filter(d => d.veg >= minVeg).map(d => ({
       cls: d.cls,
       name: names[d.cls] || String(d.cls),
       score: d.score,
+      veg: d.veg,
       /* undo letterbox, then normalise against the source */
       x0: (d.x0 - map.dx) / map.s / srcW,
       y0: (d.y0 - map.dy) / map.s / srcH,

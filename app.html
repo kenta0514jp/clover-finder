@@ -37,6 +37,14 @@
   .stat{ font-variant-numeric:tabular-nums; white-space:nowrap; }
   .stat b{ color:var(--mist); font-weight:600; }
   .stat.hit b{ color:var(--signal); }
+  /* which engine is answering — visible at all times, because a silent
+     fallback is indistinguishable from a working detector until it lies */
+  .tag{
+    border:1px solid var(--hair); border-radius:2px; padding:2px 6px;
+    font-size:9.5px; letter-spacing:.1em; color:var(--faint); white-space:nowrap;
+  }
+  .tag.ok{ color:var(--trace); border-color:var(--trace); }
+  .tag.fallback{ color:var(--signal); border-color:var(--signal-d); }
   .lamp{ width:7px; height:7px; border-radius:50%; background:var(--faint); flex:0 0 auto; }
   .lamp.live{ background:var(--trace); box-shadow:0 0 8px var(--trace); }
   .lamp.found{ background:var(--signal); box-shadow:0 0 10px var(--signal); }
@@ -174,6 +182,7 @@
   <div class="hud">
     <span class="lamp" id="lamp"></span>
     <span class="brand">Clover&nbsp;Scope</span>
+    <span class="tag" id="tagEngine">読込中</span>
     <span class="sep"></span>
     <span class="stat" id="statWin">検出 <b>0</b></span>
     <span class="stat" id="statFps"><b>—</b> s/枚</span>
@@ -307,7 +316,11 @@ const sctx = still.getContext('2d');
    this started). Only the detector puts boxes on the right plant. */
 const net = buildModel(MODEL_SPEC);
 const SIZE = net.size, CELL = net.cell;
-let engine = 'classifier';
+/* 'loading' until the ONNX session resolves one way or the other. Falling back
+   silently while the download is still in flight is what made the app put 82%
+   on a computer monitor: the classifier answers instantly and answers wrongly.
+   Better to show nothing for a few seconds than to show a confident lie. */
+let engine = 'loading';
 
 /* frame buffer handed to the fallback classifier, resized per analysis scale */
 const work = document.createElement('canvas');
@@ -323,6 +336,11 @@ const P = Object.assign({}, DEFAULTS);
    faster, so 512 is the default rather than a compromise. */
 const RES_PX = [416, 512, 640];
 const RES_LABEL = ['速い (416)', '標準 (512)', '細かい (640)'];
+
+/* A four-leaf clover is a green plant. A box holding almost no foliage is
+   wrong whatever the network says — every training image is a photograph of
+   clover, so the network was never shown a desk and told to stay quiet. */
+const MIN_VEG = 0.25;
 
 /* the fallback classifier still needs its multi-scale sweep */
 const FB_SCALES = [190, 275, 400];
@@ -420,10 +438,12 @@ function pickMarks(all, thr, maxN){
 
 async function analyse(drawFn, srcW, srcH){
   const thr = P.thr/100;
+  if (engine === 'loading') return null;
   if (engine === 'detector'){
     Detector.setSize(RES_PX[P.res]);
     const dets = await Detector.detect(drawFn, srcW, srcH,
-                                       { conf: Math.min(thr, 0.10), iou: 0.45 });
+                                       { conf: Math.min(thr, 0.10), iou: 0.45,
+                                         minVeg: MIN_VEG });
     const four = pickMarks(dets.filter(d => d.cls !== 0), thr, P.marks);
     const three = dets.filter(d => d.cls === 0 && d.score >= 0.25).slice(0, 40);
     const best = dets.reduce((b,d) => d.cls !== 0 && d.score > b ? d.score : b, 0);
@@ -448,6 +468,7 @@ async function scanOnce(){
       ctx.drawImage(video, c.sx, c.sy, c.sw, c.sh, dx, dy, w, h);
     }, c.sw, c.sh);
     if (!running) return;
+    if (!r){ hint.textContent = '検出器を読み込んでいます… (約12MB、初回のみ)'; return; }
 
     lastMarks = r.four; lastThree = r.three;
     drawMarks(r.four, r.three);
@@ -663,6 +684,11 @@ function analysePhoto(file){
       const r = await analyse((ctx, dx, dy, w, h) => {
         ctx.drawImage(img, dx, dy, w, h);
       }, img.width, img.height);
+      if (!r){
+        hint.textContent = '検出器を読み込んでいます… 読み込み後にもう一度選んでください';
+        flashToast('読み込み中');
+        return;
+      }
       const thr = P.thr/100;
       const scale = { w: W, h: H };
       if (P.three) for (const m of r.three) boxOn(sctx, m, scale, false);
@@ -730,24 +756,26 @@ btnReset.addEventListener('click', () => {
 /* ============================================================ engine ==== */
 /* The detector is ~12 MB of weights plus a WASM runtime, so the page is usable
    (and honest about which engine it has) before the download finishes. */
-const engineline = $('engineline');
+const engineline = $('engineline'), tagEngine = $('tagEngine');
+function setEngine(kind, line, tag){
+  engine = kind;
+  const cls = kind === 'detector' ? 'ok' : kind === 'loading' ? '' : 'fallback';
+  engineline.className = 'engine ' + cls;
+  engineline.textContent = line;
+  tagEngine.className = 'tag ' + cls;
+  tagEngine.textContent = tag;
+}
 (async () => {
   if (typeof ort === 'undefined' || typeof Detector === 'undefined'){
-    engine = 'classifier';
-    engineline.className = 'engine fallback';
-    engineline.textContent = '簡易判定で動作中 — 枠の位置は当てになりません';
+    setEngine('classifier', '簡易判定で動作中 — 枠の位置は当てになりません', '簡易');
     return;
   }
   try{
     const info = await Detector.load({ model: 'model.onnx', imgsz: RES_PX[P.res],
                                        names: ['clover-3', 'clover-4'] });
-    engine = 'detector';
-    engineline.className = 'engine ok';
-    engineline.textContent = `検出器 YOLOv8n / ${info.imgsz}px — 準備完了`;
+    setEngine('detector', `検出器 YOLOv8n / ${info.imgsz}px — 準備完了`, '検出器');
   }catch(e){
-    engine = 'classifier';
-    engineline.className = 'engine fallback';
-    engineline.textContent = '検出器を読み込めません — 簡易判定で動作中';
+    setEngine('classifier', '検出器を読み込めません — 簡易判定で動作中', '簡易');
   }
 })();
 
